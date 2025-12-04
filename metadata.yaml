@@ -1,0 +1,6 @@
+name: astrbot_plugin_smart_translator
+display_name: Smart Translator
+version: 0.1.0
+author: YanL
+desc: 基于 LLM 的自然语言翻译插件，支持 50+ 语言、二次翻译和多种输出格式
+config_schema: _conf_schema.json

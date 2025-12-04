@@ -1,0 +1,108 @@
+{
+  "api_settings": {
+    "description": "LLM 提供商和管道设置",
+    "type": "object",
+    "hint": "在 AstrBot 中选择已有的 Provider 或指向其它接口的模型给 Smart Translator 使用。",
+    "items": {
+      "provider_id": {
+        "description": "AstrBot Provider",
+        "type": "string",
+        "hint": "选择 AstrBot WebUI 中已配置的 provider 供本插件调用。",
+        "_special": "select_provider",
+        "provider_type": "chat_completion",
+        "default": ""
+      },
+      "fallback_provider_id": {
+        "description": "回退 Provider",
+        "type": "string",
+        "hint": "主 provider 失败时使用的备用 provider（可以是本地或另一个在线 LLM）。建议配置以确保翻译服务可用性。",
+        "_special": "select_provider",
+        "provider_type": "chat_completion",
+        "default": ""
+      },
+      "api_type": {
+        "description": "API 类型",
+        "type": "string",
+        "hint": "默认为 Provider 自动决策，也可手动指定 OpenAI/Google/Azure/Moonshot/custom 类型。",
+        "options": ["", "openai", "google", "azure", "moonshot", "custom"],
+        "default": ""
+      },
+      "custom_api_base": {
+        "description": "Custom API Base",
+        "type": "string",
+        "hint": "需要翻墙或连接特殊服务时提供自定义 base URL。",
+        "default": ""
+      },
+      "model": {
+        "description": "Model",
+        "type": "string",
+        "hint": "指定使用的模型名，留空则依赖 provider 默认值。",
+        "default": ""
+      },
+      "provider_is_local": {
+        "description": "本地 LLM",
+        "type": "bool",
+        "hint": "选定的 provider 是否基于本地模型，此打助插件出口提示。",
+        "default": false
+      }
+    }
+  },
+  "interaction_settings": {
+    "description": "交互与预设",
+    "type": "object",
+    "items": {
+      "cache_ttl_minutes": {
+        "description": "二次翻译缓存时间（分钟）",
+        "type": "string",
+        "hint": "首次翻译后缓存原文的时间，在此期间可通过引用回复进行二次翻译。",
+        "options": ["5", "15", "30", "60", "120", "360", "720", "1440"],
+        "default": "15"
+      },
+      "default_target_lang": {
+        "description": "\u9ed8\u8ba4\u76ee\u6807\u8bed\u79cd",
+        "type": "string",
+        "hint": "\u6e90\u8bed\u68c0\u6d4b\u4e0d\u51c6\u65f6\u7684\u7f13\u51b2\u8bed\u7a0b\u63a7\u5236\u3002",
+        "options": ["zh", "en", "ja", "ko", "ru", "auto"],
+        "default": "zh"
+      },
+      "system_prompt": {
+        "description": "System Prompt",
+        "type": "text",
+        "hint": "\u4f20\u7ed9 LLM \u7684\u7cfb\u7edf\u63d0\u793a\uff0c\u7528\u4e8e\u7ffb\u8bd1\u884c\u4e3a\u7ea6\u675f\u3002",
+        "default": "You are a high-precision translation engine. Translate the provided text using only the text itself plus the explicit instructions. Do not inject background, memory, or conversation context. Return only the translated text."
+      }
+    }
+  },
+  "formatter_settings": {
+    "description": "\u683c\u5f0f\u5316",
+    "type": "object",
+    "items": {
+      "output_mode": {
+        "description": "\u54cd\u5e94\u6a21\u5f0f",
+        "type": "string",
+        "hint": "plain=\u4ec5\u5b57\u9762\u7ffb\u8bd1\uff0ctagged=[src->tgt]\u6807\u5934\uff0cbilingual=\u539f/\u7ffb\u5bf9\u7167\u3002",
+        "options": ["plain", "tagged", "bilingual"],
+        "default": "tagged"
+      }
+    }
+  },
+  "logging_settings": {
+    "description": "\u65e5\u5fd7\u4e0e\u8c03\u8bd5",
+    "type": "object",
+    "items": {
+      "log_level": {
+        "description": "\u65e5\u5fd7\u7ea7\u522b",
+        "type": "string",
+        "hint": "\u63a7\u5236 Smart Translator \u8f93\u51fa\u54ea\u4e9b\u65e5\u5fd7 (error / warning / info / debug)",
+        "options": ["error", "warning", "info", "debug"],
+        "default": "info"
+      },
+      "show_api_exchange": {
+        "description": "\u663e\u793a API \u8fde\u63a5/\u54cd\u5e94",
+        "type": "bool",
+        "hint": "\u6392\u67e5 LLM \u8c03\u7528\u65f6\u53ef\u6253\u5370\u8bf7\u6c42\u548c\u54cd\u5e94\u9884\u89c8",
+        "default": false
+      }
+    }
+  }
+}
