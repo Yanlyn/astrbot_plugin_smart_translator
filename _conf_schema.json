@@ -87,20 +87,13 @@
     }
   },
   "logging_settings": {
-    "description": "\u65e5\u5fd7\u4e0e\u8c03\u8bd5",
+    "description": "日志与调试",
     "type": "object",
     "items": {
-      "log_level": {
-        "description": "\u65e5\u5fd7\u7ea7\u522b",
-        "type": "string",
-        "hint": "\u63a7\u5236 Smart Translator \u8f93\u51fa\u54ea\u4e9b\u65e5\u5fd7 (error / warning / info / debug)",
-        "options": ["error", "warning", "info", "debug"],
-        "default": "info"
-      },
       "show_api_exchange": {
-        "description": "\u663e\u793a API \u8fde\u63a5/\u54cd\u5e94",
+        "description": "显示 API 连接/响应",
         "type": "bool",
-        "hint": "\u6392\u67e5 LLM \u8c03\u7528\u65f6\u53ef\u6253\u5370\u8bf7\u6c42\u548c\u54cd\u5e94\u9884\u89c8",
+        "hint": "排查 LLM 调用时可打印请求和响应预览",
         "default": false
       }
     }

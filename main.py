@@ -1,17 +1,17 @@
-"""AstrBot Smart Translator plugin - 精简版翻译插件."""
+"""AstrBot Smart Translator plugin."""
 
 from __future__ import annotations
 
 import re
-import logging
 import time
+from collections import OrderedDict
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Dict, Literal, Optional, Tuple
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
-from astrbot.api.star import Context, Star, register
+from astrbot.api.star import Context, Star
 
 
 # 语言别名映射 (基于 Google Translate 支持的语言)
@@ -173,17 +173,54 @@ CONFIG_DEFAULTS: Dict[str, Any] = {
         "output_mode": "tagged",
     },
     "logging_settings": {
-        "log_level": "info",
         "show_api_exchange": False,
     },
 }
 
-LOG_LEVEL_MAP = {
-    "error": logging.ERROR,
-    "warning": logging.WARNING,
-    "info": logging.INFO,
-    "debug": logging.DEBUG,
-}
+# 缓存配置常量
+CACHE_MAX_SIZE = 100  # 最大缓存条目数（LRU 淘汰）
+
+
+class LRUCache:
+    """简单的 LRU 缓存实现，带 TTL 支持."""
+    
+    def __init__(self, max_size: int = 100, ttl_seconds: int = 900):
+        self._cache: OrderedDict[str, Tuple[Any, float]] = OrderedDict()
+        self._max_size = max_size
+        self._ttl_seconds = ttl_seconds
+    
+    def get(self, key: str) -> Optional[Any]:
+        if key not in self._cache:
+            return None
+        value, timestamp = self._cache[key]
+        if time.time() - timestamp > self._ttl_seconds:
+            del self._cache[key]
+            return None
+        # 移动到末尾（最近使用）
+        self._cache.move_to_end(key)
+        return value
+    
+    def set(self, key: str, value: Any) -> None:
+        if key in self._cache:
+            del self._cache[key]
+        self._cache[key] = (value, time.time())
+        # 超出容量时移除最旧的
+        while len(self._cache) > self._max_size:
+            self._cache.popitem(last=False)
+    
+    def set_ttl(self, ttl_seconds: int) -> None:
+        self._ttl_seconds = ttl_seconds
+    
+    def cleanup_expired(self) -> int:
+        """清理所有过期条目，返回清理数量."""
+        now = time.time()
+        expired_keys = [
+            k for k, (_, ts) in self._cache.items() 
+            if now - ts > self._ttl_seconds
+        ]
+        for k in expired_keys:
+            del self._cache[k]
+        return len(expired_keys)
 
 
 def _preview(text: str, limit: int = 80) -> str:
@@ -210,40 +247,55 @@ def _normalize_lang(token: Optional[str]) -> Optional[str]:
 
 
 def _detect_language(text: str) -> str:
+    """基于字符集统计检测文本主要语言（单次遍历）."""
     if not text:
         return "auto"
-    counts = {
-        "zh": len(re.findall(r"[\u4e00-\u9fff]", text)),
-        "ja": len(re.findall(r"[\u3040-\u30ff]", text)),
-        "ko": len(re.findall(r"[\uac00-\ud7af]", text)),
-        "ru": len(re.findall(r"[\u0400-\u04FF]", text)),
-        "en": len(re.findall(r"[A-Za-z]", text)),
-    }
+    
+    counts = {"zh": 0, "ja": 0, "ko": 0, "ru": 0, "en": 0}
+    for char in text:
+        code = ord(char)
+        if 0x4E00 <= code <= 0x9FFF:
+            counts["zh"] += 1
+        elif 0x3040 <= code <= 0x30FF:
+            counts["ja"] += 1
+        elif 0xAC00 <= code <= 0xD7AF:
+            counts["ko"] += 1
+        elif 0x0400 <= code <= 0x04FF:
+            counts["ru"] += 1
+        elif (0x0041 <= code <= 0x005A) or (0x0061 <= code <= 0x007A):
+            counts["en"] += 1
+    
     lang, count = max(counts.items(), key=lambda x: x[1])
     return lang if count > 0 else "auto"
 
 
+# 预编译清理译文用的正则表达式
+_CLEAN_PATTERNS = [
+    re.compile(r"^(?:翻译[：:]\s*)", re.IGNORECASE),
+    re.compile(r"^(?:译文[：:]\s*)", re.IGNORECASE),
+    re.compile(r"^(?:Translation[：:]?\s*)", re.IGNORECASE),
+    re.compile(r"^(?:Here(?:'s| is) the translation[：:]?\s*)", re.IGNORECASE),
+]
+_URL_PATTERN = re.compile(r"https?://[^\s\]\)]+")
+_MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\([^)]*\)")
+_CITATION_PATTERN = re.compile(r"\[\d+\]")
+_MULTI_NEWLINE_PATTERN = re.compile(r"\n{2,}")
+
+
 def _clean_translation(text: str) -> str:
-    """清理LLM返回的译文."""
+    """清理 LLM 返回的译文."""
     if not text:
         return ""
     result = text.strip()
-    # 去除解释性前缀
-    for pattern in [
-        r"^(?:翻译[：:]\s*)",
-        r"^(?:译文[：:]\s*)",
-        r"^(?:Translation[：:]?\s*)",
-        r"^(?:Here(?:'s| is) the translation[：:]?\s*)",
-    ]:
-        result = re.sub(pattern, "", result, flags=re.IGNORECASE).strip()
-    # 去除所有URL
-    result = re.sub(r"https?://[^\s\]\)]+", "", result).strip()
-    # 去除Markdown链接但保留文字
-    result = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", result)
-    # 去除引用标记
-    result = re.sub(r"\[\d+\]", "", result).strip()
-    # 去除多余换行
-    result = re.sub(r"\n{2,}", "\n", result)
+    
+    for pattern in _CLEAN_PATTERNS:
+        result = pattern.sub("", result).strip()
+    
+    result = _URL_PATTERN.sub("", result).strip()
+    result = _MARKDOWN_LINK_PATTERN.sub(r"\1", result)
+    result = _CITATION_PATTERN.sub("", result).strip()
+    result = _MULTI_NEWLINE_PATTERN.sub("\n", result)
+    
     return result.strip()
 
 
@@ -258,13 +310,9 @@ class TranslationBackendError(RuntimeError):
     pass
 
 
-@register(
-    "smart-translator",
-    "YanL",
-    "提供通用文本翻译工具，可被支持 function calling 的模型调用",
-    "0.1.0",
-)
 class SmartTranslator(Star):
+    """基于 LLM 的自然语言翻译插件."""
+    
     def __init__(self, context: Context, config: Optional[Dict[str, Any]] = None):
         super().__init__(context)
         self.config: Dict[str, Any] = config or {}
@@ -276,9 +324,8 @@ class SmartTranslator(Star):
         self.output_mode: Literal["plain", "tagged", "bilingual"] = "tagged"
         self.show_api_exchange: bool = False
         self.cache_ttl_minutes: int = 15
-        # 缓存最近的翻译原文，用于二次翻译
-        # key: cache_key, value: (original_source_text, timestamp)
-        self._translation_cache: Dict[str, Tuple[str, float]] = {}
+        # LRU 缓存，带容量限制和 TTL
+        self._translation_cache = LRUCache(max_size=CACHE_MAX_SIZE, ttl_seconds=15 * 60)
 
     async def initialize(self):
         self._load_config()
@@ -308,6 +355,9 @@ class SmartTranslator(Star):
             self.cache_ttl_minutes = int(_clean_str(interaction.get("cache_ttl_minutes")) or "15")
         except ValueError:
             self.cache_ttl_minutes = 15
+        
+        # 更新缓存 TTL
+        self._translation_cache.set_ttl(self.cache_ttl_minutes * 60)
 
         formatter = merged.get("formatter_settings", {})
         mode = _clean_str(formatter.get("output_mode"))
@@ -315,12 +365,6 @@ class SmartTranslator(Star):
 
         log_settings = merged.get("logging_settings", {})
         self.show_api_exchange = _to_bool(log_settings.get("show_api_exchange"))
-        level_name = _clean_str(log_settings.get("log_level")).lower() or "info"
-        level = LOG_LEVEL_MAP.get(level_name, logging.INFO)
-        try:
-            logger.setLevel(level)
-        except AttributeError:
-            pass
 
         logger.info(
             "SmartTranslator 配置: provider_id=%s output_mode=%s default_target=%s cache_ttl=%dm",
@@ -378,7 +422,7 @@ class SmartTranslator(Star):
         # 缓存原文，用于后续二次翻译
         cache_key = self._get_cache_key(event)
         if cache_key:
-            self._translation_cache[cache_key] = (request.source_text, time.time())
+            self._translation_cache.set(cache_key, request.source_text)
             logger.debug("缓存原文: %s", _preview(request.source_text, 50))
 
         # 格式化输出，status_note 在最前面
@@ -417,18 +461,9 @@ class SmartTranslator(Star):
         if not cache_key:
             return None
         
-        cached = self._translation_cache.get(cache_key)
-        if not cached:
-            return None
-        
-        source_text, timestamp = cached
-        # 检查是否过期
-        cache_ttl_seconds = self.cache_ttl_minutes * 60
-        if time.time() - timestamp > cache_ttl_seconds:
-            del self._translation_cache[cache_key]
-            return None
-        
-        logger.debug("使用缓存原文进行二次翻译: %s", _preview(source_text, 50))
+        source_text = self._translation_cache.get(cache_key)
+        if source_text:
+            logger.debug("使用缓存原文进行二次翻译: %s", _preview(source_text, 50))
         return source_text
 
     def _parse_request(self, event: AstrMessageEvent) -> Optional[TranslationRequest]:
